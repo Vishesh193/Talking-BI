@@ -1,0 +1,306 @@
+@import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ─── CSS Variables — Power BI Light Theme ─────────────────────────────── */
+:root {
+  /* Brand / Accent */
+  --pbi-blue:         #0078D4;
+  --pbi-blue-dark:    #005A9E;
+  --pbi-blue-light:   #EFF6FC;
+  --pbi-blue-mid:     #C7E0F4;
+  --pbi-yellow:       #FFB900;
+  --pbi-teal:         #008272;
+  --pbi-purple:       #8764B8;
+  --pbi-red:          #D13438;
+  --pbi-green:        #107C10;
+  --pbi-orange:       #CA5010;
+
+  /* Neutrals */
+  --neutral-0:        #FFFFFF;
+  --neutral-10:       #FAF9F8;
+  --neutral-20:       #F3F2F1;
+  --neutral-30:       #EDEBE9;
+  --neutral-40:       #E1DFDD;
+  --neutral-60:       #C8C6C4;
+  --neutral-80:       #A19F9D;
+  --neutral-100:      #797775;
+  --neutral-120:      #605E5C;
+  --neutral-150:      #3B3A39;
+  --neutral-160:      #323130;
+  --neutral-180:      #201F1E;
+
+  /* Surfaces */
+  --surface-page:     #F3F2F1;
+  --surface-card:     #FFFFFF;
+  --surface-panel:    #FFFFFF;
+  --surface-header:   #FFFFFF;
+  --surface-ribbon:   #FFFFFF;
+  --surface-sidebar:  #F3F2F1;
+
+  /* Text */
+  --text-primary:     #201F1E;
+  --text-secondary:   #605E5C;
+  --text-placeholder: #A19F9D;
+  --text-link:        #0078D4;
+
+  /* Borders */
+  --border-light:     #EDEBE9;
+  --border-default:   #D2D0CE;
+  --border-dark:      #C8C6C4;
+
+  /* Shadows */
+  --shadow-card:      0 1.6px 3.6px 0 rgba(0,0,0,.13), 0 .3px .9px 0 rgba(0,0,0,.11);
+  --shadow-panel:     0 2px 8px rgba(0,0,0,.12);
+  --shadow-modal:     0 8px 32px rgba(0,0,0,.18);
+
+  /* Typography */
+  --font-ui:          'Segoe UI', Inter, system-ui, sans-serif;
+  --font-mono:        'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+
+  /* Sizing */
+  --ribbon-h:         48px;
+  --header-h:         44px;
+  --sidebar-w:        240px;
+  --fields-w:         220px;
+  --viz-w:            240px;
+  --pagetabs-h:       34px;
+  --voicebar-h:       56px;
+}
+
+/* ─── Reset ────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* ─── Scrollbars ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--neutral-60); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--neutral-80); }
+
+/* ─── Base Button ────────────────────────────────────────────────────────── */
+button {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input, textarea, select {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+/* ─── PBI Button Variants ────────────────────────────────────────────────── */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--pbi-blue);
+  color: #fff;
+  border-radius: 2px;
+  font-weight: 600;
+  font-size: 13px;
+  transition: background .15s;
+}
+.btn-primary:hover { background: var(--pbi-blue-dark); }
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 13px;
+  background: transparent;
+  color: var(--pbi-blue);
+  border: 1px solid var(--pbi-blue);
+  border-radius: 2px;
+  font-weight: 500;
+  font-size: 13px;
+  transition: background .15s;
+}
+.btn-secondary:hover { background: var(--pbi-blue-light); }
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  color: var(--text-secondary);
+  border-radius: 2px;
+  font-size: 12px;
+  transition: background .15s, color .15s;
+}
+.btn-ghost:hover { background: var(--neutral-20); color: var(--text-primary); }
+.btn-ghost.active { background: var(--pbi-blue-light); color: var(--pbi-blue); }
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 2px;
+  color: var(--text-secondary);
+  transition: background .15s, color .15s;
+}
+.btn-icon:hover { background: var(--neutral-20); color: var(--text-primary); }
+.btn-icon.active { background: var(--pbi-blue-light); color: var(--pbi-blue); }
+
+/* ─── Cards / Panels ────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface-card);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-card);
+}
+.card-selected {
+  border-color: var(--pbi-blue) !important;
+  box-shadow: 0 0 0 1px var(--pbi-blue), var(--shadow-card);
+}
+
+/* ─── Tags / Badges ─────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-blue   { background: var(--pbi-blue-light); color: var(--pbi-blue); }
+.badge-green  { background: #DFF6DD; color: var(--pbi-green); }
+.badge-red    { background: #FDE7E9; color: var(--pbi-red); }
+.badge-purple { background: #EDE7F6; color: var(--pbi-purple); }
+.badge-orange { background: #FDE8D8; color: var(--pbi-orange); }
+.badge-gray   { background: var(--neutral-20); color: var(--neutral-120); }
+
+/* ─── Form Elements ─────────────────────────────────────────────────────── */
+.input-field {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 2px;
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-size: 13px;
+  transition: border-color .15s;
+  outline: none;
+}
+.input-field:focus { border-color: var(--pbi-blue); }
+.input-field::placeholder { color: var(--text-placeholder); }
+
+/* ─── Dividers ──────────────────────────────────────────────────────────── */
+.divider { height: 1px; background: var(--border-light); }
+.divider-v { width: 1px; background: var(--border-light); align-self: stretch; }
+
+/* ─── Tooltip ───────────────────────────────────────────────────────────── */
+.tooltip-wrapper { position: relative; display: inline-flex; }
+.tooltip-wrapper .tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--neutral-180);
+  color: #fff;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .15s;
+  z-index: 999;
+}
+.tooltip-wrapper:hover .tooltip { opacity: 1; }
+
+/* ─── Animations ────────────────────────────────────────────────────────── */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes slideRight { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+.fade-in { animation: fadeIn .2s ease; }
+.slide-up { animation: slideUp .25s ease; }
+.spin { animation: spin 1s linear infinite; }
+
+/* ─── Status Dot ─────────────────────────────────────────────────────────── */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.connected { background: var(--pbi-green); }
+.status-dot.disconnected { background: var(--neutral-60); }
+.status-dot.thinking { background: var(--pbi-blue); animation: pulse 1s infinite; }
+.status-dot.error { background: var(--pbi-red); }
+
+/* ─── Insight Cards ──────────────────────────────────────────────────────── */
+.insight-card {
+  padding: 10px 12px;
+  border-left: 3px solid var(--border-light);
+  background: var(--neutral-10);
+  border-radius: 0 2px 2px 0;
+  transition: border-color .15s;
+}
+.insight-card.up   { border-left-color: var(--pbi-green); }
+.insight-card.down { border-left-color: var(--pbi-red); }
+.insight-card.anomaly { border-left-color: var(--pbi-orange); }
+
+/* ─── Loading Skeleton ───────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--neutral-20) 25%, var(--neutral-30) 50%, var(--neutral-20) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 2px;
+}
+
+/* ─── Modal backdrop ─────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.4);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn .15s ease;
+}
+.modal-box {
+  background: var(--surface-card);
+  border-radius: 4px;
+  box-shadow: var(--shadow-modal);
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp .2s ease;
+}
+
+/* ─── Chart colors (CSS custom props for Recharts consistency) ───────────── */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--surface-card) !important;
+  border: 1px solid var(--border-light) !important;
+  border-radius: 2px !important;
+  box-shadow: var(--shadow-card) !important;
+  font-family: var(--font-ui) !important;
+  font-size: 12px !important;
+  color: var(--text-primary) !important;
+}

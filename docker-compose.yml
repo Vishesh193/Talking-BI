@@ -1,0 +1,64 @@
+version: '3.9'
+
+services:
+  # ─── Redis ───────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─── Backend ─────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=sqlite+aiosqlite:///./talking_bi.db
+      - ANALYTICS_DB_URL=${ANALYTICS_DB_URL:-}
+      - POWERBI_CLIENT_ID=${POWERBI_CLIENT_ID:-}
+      - POWERBI_CLIENT_SECRET=${POWERBI_CLIENT_SECRET:-}
+      - POWERBI_TENANT_ID=${POWERBI_TENANT_ID:-}
+      - SALESFORCE_USERNAME=${SALESFORCE_USERNAME:-}
+      - SALESFORCE_PASSWORD=${SALESFORCE_PASSWORD:-}
+      - SALESFORCE_SECURITY_TOKEN=${SALESFORCE_SECURITY_TOKEN:-}
+      - SHOPIFY_SHOP_URL=${SHOPIFY_SHOP_URL:-}
+      - SHOPIFY_ACCESS_TOKEN=${SHOPIFY_ACCESS_TOKEN:-}
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─── Frontend ────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000/api/v1
+      - VITE_WS_URL=ws://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  uploads_data:
