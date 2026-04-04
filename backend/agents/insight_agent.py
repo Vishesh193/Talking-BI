@@ -5,63 +5,87 @@ Uses statistical analysis + Groq LLM for narrative generation.
 import json
 import logging
 import statistics
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from groq import AsyncGroq
 
 from core.config import settings
+from core.llm import groq_client
 
 logger = logging.getLogger(__name__)
 
-INSIGHT_PROMPT = """You are a senior business analyst. Analyze this data and generate 2-3 sharp, actionable insights.
+INSIGHT_PROMPT = """You are a senior business analyst. Analyze this data and generate:
+1. 2-3 sharp, actionable insights.
+2. 3-4 suggested follow-up natural language queries to further explore this data.
 
 Intent: {intent}
 Data: {data_sample}
 Statistical Summary: {stats}
 
-Return ONLY a JSON array of insight objects:
-[
-  {{
-    "title": "Short compelling headline (max 10 words)",
-    "body": "One sentence explanation with specific numbers from the data",
-    "metric": "the metric this insight is about",
-    "change_pct": null or a number like 34.5 or -12.3,
-    "direction": "up" or "down" or "neutral",
-    "confidence": 0.85,
-    "action": "One concrete recommended action",
-    "is_anomaly": false
-  }}
-]
+Return ONLY a JSON object:
+{{
+  "insights": [
+    {{
+      "title": "Short compelling headline (max 10 words)",
+      "body": "One sentence explanation with specific numbers from the data",
+      "metric": "the metric this insight is about",
+      "change_pct": null or a number like 34.5 or -12.3,
+      "direction": "up" or "down" or "neutral",
+      "confidence": 0.85,
+      "action": "One concrete recommended action",
+      "is_anomaly": false
+    }}
+  ],
+  "suggestions": [
+     "Drill down by [dimension]", 
+     "Compare [metric] to previous period",
+     "What if [metric] increases by 10%?"
+  ]
+}}
 
 Rules:
-- Always include specific numbers from the data
-- Rank by business impact (most impactful first)
-- Keep body under 25 words
-- action should be specific and actionable
-- Set is_anomaly=true if a value deviates more than 20% from the average
+- insights: Always include specific numbers. Rank by business impact. Body under 25 words.
+- suggestions: Be specific to the current data. e.g. if looking at 'Revenue', suggests 'Revenue by region'.
+- suggestions: Include at least one 'What if' simulation query.
+- CRITICAL — NO CURRENCY SYMBOLS: Never use $, £, €, or any currency symbols in insight text. The data units are unknown. Write numbers as plain numerals only (e.g. "118,810 total" NOT "$118,810 total").
+- CRITICAL — USE ACTUAL DATA VALUES: Copy numbers directly from the data sample. Do not invent or estimate values.
 """
 
 
 class InsightAgent:
     def __init__(self):
-        self.client = AsyncGroq(
-            api_key=settings.GROQ_API_KEY,
-            timeout=15.0,
-            max_retries=1
-        )
+        pass
 
-    async def run(self, intent: Dict, result_data: Optional[List[Dict]], chart_config: Optional[Dict]) -> Dict:
-        """Generate ranked business insights from query results."""
+    async def run(self, intent: Dict, result_data: Optional[List[Dict]] = None, chart_config: Optional[Dict] = None) -> Dict:
+        """Generate ranked business insights and follow-up suggestions from query results."""
         if not result_data:
-            return {"insights": []}
+            return {"insights": [], "suggestions": []}
 
         try:
             stats = self._compute_stats(result_data)
-            insights = await self._generate_insights(intent, result_data, stats)
-            return {"insights": insights}
+            data_sample = result_data[:20]
+
+            user_prompt = INSIGHT_PROMPT.format(
+                intent=json.dumps(intent),
+                data_sample=json.dumps(data_sample, default=str),
+                stats=json.dumps(stats),
+            )
+
+            parsed = await groq_client.generate_json("You are an expert data analyst.", user_prompt)
+
+            # Support both {insights: [...]} format and legacy bare array format
+            if isinstance(parsed, list):
+                insights = parsed
+                suggestions = []
+            else:
+                insights = parsed.get("insights", [])
+                suggestions = parsed.get("suggestions", [])
+
+            insights = self._detect_anomalies(insights, result_data, stats)
+            return {"insights": insights[:3], "suggestions": suggestions[:4]}
+
         except Exception as e:
-            logger.error(f"InsightAgent error: {e}")
-            # Fallback to statistical insights
-            return {"insights": self._fallback_insights(intent, result_data)}
+            logger.error(f"Insight generation failed (all fallbacks): {e}")
+            return {"insights": self._fallback_insights(intent, result_data), "suggestions": []}
 
     def _compute_stats(self, data: List[Dict]) -> Dict:
         """Compute basic statistics on numeric columns."""
@@ -86,40 +110,6 @@ class InsightAgent:
                 "stdev": round(statistics.stdev(values), 2) if len(values) > 1 else 0,
             }
         return stats
-
-    async def _generate_insights(self, intent: Dict, data: List[Dict], stats: Dict) -> List[Dict]:
-        """Use Groq to generate narrative insights."""
-        try:
-            # Sample data (first 10 rows for context window efficiency)
-            data_sample = data[:10]
-            prompt = INSIGHT_PROMPT.format(
-                intent=json.dumps(intent),
-                data_sample=json.dumps(data_sample, default=str),
-                stats=json.dumps(stats),
-            )
-
-            response = await self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=800,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1,
-            )
-
-            raw = response.choices[0].message.content.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-
-            insights = json.loads(raw)
-
-            # Add anomaly detection
-            insights = self._detect_anomalies(insights, data, stats)
-            return insights[:3]  # Max 3 insights
-
-        except Exception as e:
-            logger.error(f"Groq insight generation failed: {e}")
-            return self._fallback_insights(intent, data)
 
     def _detect_anomalies(self, insights: List[Dict], data: List[Dict], stats: Dict) -> List[Dict]:
         """Flag insights where values deviate significantly from mean."""
@@ -181,8 +171,9 @@ class InsightAgent:
         return insights[:3]
 
     def _format_value(self, val: float) -> str:
+        """Format numbers nicely without assuming currency."""
         if val >= 1_000_000:
-            return f"${val/1_000_000:.1f}M"
+            return f"{val/1_000_000:.1f}M"
         if val >= 1_000:
-            return f"${val/1_000:.1f}K"
-        return f"${val:.0f}"
+            return f"{val/1_000:.1f}K"
+        return f"{val:,.0f}"

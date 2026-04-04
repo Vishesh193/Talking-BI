@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, BarChart2, TrendingUp, PieChart, Table2, CreditCard, ChevronRight, CheckCircle2, Check } from 'lucide-react'
 import { useBIStore, DashboardSuggestion, ClarifyingQuestion } from '@/stores/biStore'
+import { apiService } from '@/services/api'
 import toast from 'react-hot-toast'
 
 interface Props {
@@ -21,17 +22,17 @@ const CHART_ICON_MAP: Record<string, React.ComponentType<any>> = {
 }
 
 export default function DashboardSuggestionsModal({ ws }: Props) {
-  const { fileAnalysis, setFileAnalysis, addPage, setActivePageId } = useBIStore()
+  const { fileAnalysis, setFileAnalysis, addPage, setActivePageId, setPageAdvancedMeta } = useBIStore()
   const [step, setStep] = useState<Step>('suggestions')
   const [selectedSuggestion, setSelectedSuggestion] = useState<DashboardSuggestion | null>(null)
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState<Record<string, string[]>>({})
   const [generating, setGenerating] = useState(false)
 
   if (!fileAnalysis) return null
 
   const { suggestions, clarifying_questions, filename, rows, columns } = fileAnalysis
-  const pendingQuestions = clarifying_questions.filter(q => !answers[q.id] || answers[q.id] === '__skip__')
-  const answeredCount = clarifying_questions.filter(q => answers[q.id] && answers[q.id] !== '__skip__').length
+  const pendingQuestions = clarifying_questions.filter(q => (answers[q.id]?.length || 0) === 0)
+  const answeredCount = clarifying_questions.filter(q => answers[q.id]?.length > 0 && !answers[q.id]?.includes('__skip__')).length
 
   const handleSelectSuggestion = (s: DashboardSuggestion) => {
     setSelectedSuggestion(s)
@@ -43,46 +44,94 @@ export default function DashboardSuggestionsModal({ ws }: Props) {
   }
 
   const handleAnswer = (qId: string, answer: string) => {
-    setAnswers(prev => ({ ...prev, [qId]: answer }))
+    setAnswers(prev => {
+      const current = prev[qId] || []
+      if (answer === '__skip__') return { ...prev, [qId]: ['__skip__'] }
+      
+      const filtered = current.filter(a => a !== '__skip__')
+      if (filtered.includes(answer)) {
+        return { ...prev, [qId]: filtered.filter(a => a !== answer) }
+      } else {
+        return { ...prev, [qId]: [...filtered, answer] }
+      }
+    })
+  }
+
+  const handleSelectAll = (qId: string, options: string[]) => {
+    setAnswers(prev => ({ ...prev, [qId]: options }))
   }
 
   const handleSkipQuestion = (qId: string) => {
-    setAnswers(prev => ({ ...prev, [qId]: '__skip__' }))
+    setAnswers(prev => ({ ...prev, [qId]: ['__skip__'] }))
   }
 
-  const allAnswered = clarifying_questions.every(q => !!answers[q.id])
+  const allAnswered = clarifying_questions.every(q => (answers[q.id]?.length || 0) > 0)
 
-  const handleGenerate = async (suggestion: DashboardSuggestion | null = selectedSuggestion, ans: Record<string, string> = answers) => {
+  const handleGenerate = async (suggestion: DashboardSuggestion | null = selectedSuggestion, ans: Record<string, string[]> = answers) => {
     if (!suggestion) return
     setGenerating(true)
     setStep('generating')
 
-    // Build context from answers
-    const answerContext = Object.entries(ans)
-      .filter(([, v]) => v && v !== '__skip__')
-      .map(([qId, v]) => {
-        const q = clarifying_questions.find(q => q.id === qId)
-        return q ? `${q.question}: ${v}` : ''
-      })
-      .filter(Boolean)
-      .join('. ')
-
-    // Build dashboard query list based on suggestion
-    const queries = buildQueriesForSuggestion(suggestion, fileAnalysis, answerContext)
-
+    let queries: { query: string, x?: number, y?: number, w?: number, h?: number, type?: string, kpi_label?: string, kpi_delta?: number, kpi_direction?: string }[] = []
+    let paletteColors: string[] = []
+    
+    let isAdvancedFallback = false;
+    
     // Add new page for this dashboard
     const pageId = addPage(`${suggestion.title}`)
     setActivePageId(pageId)
-    setFileAnalysis(null)
 
-    // Fire all queries sequentially
-    for (const query of queries) {
-      ws.sendTextQuery(query)
-      await new Promise(r => setTimeout(r, 1800)) // Stagger so the agent pipeline doesn't clash
+    if (suggestion.id === 'S0_ADVANCED') {
+      try {
+        const { sessionId } = useBIStore.getState()
+        // Format answers for backend if it expects strings, but backend route will also be updated to handle lists
+        const res = await apiService.generateAdvancedDashboard({ session_id: sessionId, answers: ans })
+        
+        // Extract professional palette colors
+        if (res.colors) {
+          paletteColors = [res.colors.primary, res.colors.secondary, res.colors.positive, res.colors.negative].filter(Boolean)
+        }
+
+        // Store advanced meta on the page so DashboardCanvas can render header + filter pills
+        setPageAdvancedMeta(pageId, {
+          dashboard_title: res.dashboard_title,
+          filter_pills: res.filter_pills || [],
+          colors: res.colors,
+        })
+        
+        queries = res.panels || []
+      } catch (err) {
+        toast.error('Advanced generation failed — falling back to legacy')
+        isAdvancedFallback = true;
+        queries = buildQueriesForSuggestion(suggestion, fileAnalysis, '').map(q => ({ query: q }))
+      }
+    } else {
+      // Build context from answers
+      const answerContext = Object.entries(ans)
+        .filter(([, v]) => v && v.length > 0 && !v.includes('__skip__'))
+        .map(([qId, v]) => {
+          const q = clarifying_questions.find(q => q.id === qId)
+          return q ? `${q.question}: ${v.join(', ')}` : ''
+        })
+        .filter(Boolean)
+        .join('. ')
+      queries = buildQueriesForSuggestion(suggestion, fileAnalysis, answerContext).map(q => ({ query: q }))
+    }
+
+    // If this was a legacy flow or a fallback, trigger queries from the frontend sequentially
+    if (suggestion.id !== 'S0_ADVANCED' || isAdvancedFallback) {
+      const fireSequential = async () => {
+        for (const q of queries) {
+          ws.sendTextQuery(q.query)
+          await new Promise(r => setTimeout(r, 4000)) // 4s throttle to respect LLM rate limits
+        }
+      }
+      fireSequential()
     }
 
     toast.success(`"${suggestion.title}" dashboard created!`)
     setGenerating(false)
+    setFileAnalysis(null)
   }
 
   return (
@@ -189,22 +238,24 @@ export default function DashboardSuggestionsModal({ ws }: Props) {
               </div>
 
               <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16 }}>
-                A few questions to personalize your dashboard (answer or skip any):
+                Personalize your dashboard. Select one or more options for each question:
               </p>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
                 {clarifying_questions.map((q, idx) => {
-                  const answered = answers[q.id] && answers[q.id] !== '__skip__'
-                  const skipped  = answers[q.id] === '__skip__'
+                  const qAnswers = answers[q.id] || []
+                  const answered = qAnswers.length > 0 && !qAnswers.includes('__skip__')
+                  const skipped  = qAnswers.includes('__skip__')
                   return (
                     <QuestionBlock
                       key={q.id}
                       question={q}
                       idx={idx + 1}
-                      answer={answers[q.id] || ''}
+                      answer={qAnswers}
                       answered={!!answered}
                       skipped={!!skipped}
                       onAnswer={handleAnswer}
+                      onSelectAll={() => handleSelectAll(q.id, q.options)}
                       onSkip={handleSkipQuestion}
                     />
                   )
@@ -382,14 +433,15 @@ function SuggestionCard({
 }
 
 function QuestionBlock({
-  question, idx, answer, answered, skipped, onAnswer, onSkip,
+  question, idx, answer, answered, skipped, onAnswer, onSelectAll, onSkip,
 }: {
   question: ClarifyingQuestion
   idx: number
-  answer: string
+  answer: string[]
   answered: boolean
   skipped: boolean
   onAnswer: (id: string, v: string) => void
+  onSelectAll: () => void
   onSkip: (id: string) => void
 }) {
   const [customText, setCustomText] = useState('')
@@ -400,7 +452,7 @@ function QuestionBlock({
         padding: '14px 16px',
         border: `1px solid ${answered ? 'var(--pbi-green)' : skipped ? 'var(--border-light)' : 'var(--border-default)'}`,
         borderRadius: 2,
-        background: answered ? '#DFF6DD' : skipped ? 'var(--neutral-10)' : 'var(--surface-card)',
+        background: answered ? '#E3FBE3' : skipped ? 'var(--neutral-10)' : 'var(--surface-card)',
         transition: 'all .15s',
       }}
     >
@@ -417,7 +469,7 @@ function QuestionBlock({
         >
           {answered ? <Check size={11} /> : idx}
         </div>
-        <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
           {question.question}
         </span>
         {skipped && <span className="badge badge-gray" style={{ marginLeft: 'auto', fontSize: 10 }}>Skipped</span>}
@@ -427,9 +479,29 @@ function QuestionBlock({
         <>
           {/* Option chips */}
           {question.options.length > 0 && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: question.allow_custom ? 10 : 0 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              {/* Select All button */}
+              <button
+                onClick={onSelectAll}
+                style={{
+                  padding: '5px 12px',
+                  fontSize: 12,
+                  borderRadius: 14,
+                  border: '1.5px solid var(--pbi-blue)',
+                  background: 'var(--surface-card)',
+                  color: 'var(--pbi-blue)',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                }}
+              >
+                Select All
+              </button>
+              
               {question.options.map(opt => {
-                const isSelected = answer === opt
+                const isSelected = answer.includes(opt)
                 return (
                   <button
                     key={opt}

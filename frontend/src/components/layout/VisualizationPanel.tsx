@@ -2,17 +2,28 @@ import { useBIStore, ChartType, CanvasPanel } from '@/stores/biStore'
 import {
   BarChart2, TrendingUp, AreaChart, PieChart, Table2,
   CreditCard, Layers, AlignLeft, Maximize2, Minimize2,
-  Pin, Trash2, Code, Eye, EyeOff, LayoutGrid,
+  Pin, Trash2, Code, Eye, EyeOff, LayoutGrid, Activity, 
+  Map, Target, Circle, Database, MoveRight, Kanban, GitCommit
 } from 'lucide-react'
 import { useState } from 'react'
 
 const CHART_TYPES: { type: ChartType; label: string; Icon: React.ComponentType<any> }[] = [
   { type: 'bar',          label: 'Bar',          Icon: BarChart2 },
+  { type: 'grouped_bar',  label: 'Clustered',    Icon: Layers },
+  { type: 'stacked_bar',  label: 'Stacked',      Icon: AlignLeft },
   { type: 'line',         label: 'Line',         Icon: TrendingUp },
   { type: 'area',         label: 'Area',         Icon: AreaChart },
-  { type: 'grouped_bar',  label: 'Grouped Bar',  Icon: Layers },
-  { type: 'stacked_area', label: 'Stacked Area', Icon: AlignLeft },
+  { type: 'stacked_area', label: 'Stack Area',   Icon: AlignLeft },
   { type: 'pie',          label: 'Pie',          Icon: PieChart },
+  { type: 'donut',        label: 'Donut',        Icon: Circle },
+  { type: 'scatter',      label: 'Scatter',      Icon: Activity },
+  { type: 'heatmap',      label: 'Heatmap',      Icon: LayoutGrid },
+  { type: 'treemap',      label: 'Treemap',      Icon: Kanban },
+  { type: 'waterfall',    label: 'Waterfall',    Icon: BarChart2 },
+  { type: 'gauge',        label: 'Gauge',        Icon: Target },
+  { type: 'bullet',       label: 'Bullet',       Icon: Target },
+  { type: 'sankey',       label: 'Sankey',       Icon: MoveRight },
+  { type: 'geomap',       label: 'Map',          Icon: Map },
   { type: 'kpi_card',     label: 'KPI Card',     Icon: CreditCard },
   { type: 'table',        label: 'Table',        Icon: Table2 },
 ]
@@ -26,7 +37,7 @@ export default function VisualizationPanel() {
   const {
     selectedPanelId, pages, activePageId,
     updatePanelChart, movePanelLayout,
-    removePanel, pinPanel,
+    removePanel, pinPanel, updatePanelColor
   } = useBIStore()
 
   const [showSQL, setShowSQL] = useState(false)
@@ -42,6 +53,11 @@ export default function VisualizationPanel() {
   const handleSizeChange = (w: number, h: number) => {
     if (!selectedPanelId) return
     movePanelLayout(selectedPanelId, { w, h })
+  }
+
+  const handleColorChange = (c: string) => {
+    if (!selectedPanelId) return
+    updatePanelColor(selectedPanelId, c)
   }
 
   return (
@@ -75,43 +91,42 @@ export default function VisualizationPanel() {
           <div style={{ fontSize: 11, color: 'var(--text-placeholder)', marginBottom: 8, fontWeight: 500 }}>
             CHART TYPE
           </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: 4,
-            }}
-          >
-            {CHART_TYPES.map(({ type, label, Icon }) => {
-              const isActive =
-                selectedPanel?.chartTypeOverride === type ||
-                (!selectedPanel?.chartTypeOverride && selectedPanel?.result.chart?.type === type)
-              return (
-                <button
-                  key={type}
-                  title={label}
-                  onClick={() => handleChartChange(type)}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: 3,
-                    padding: '8px 4px',
-                    borderRadius: 2,
-                    border: isActive ? '1px solid var(--pbi-blue)' : '1px solid var(--border-light)',
-                    background: isActive ? 'var(--pbi-blue-light)' : 'transparent',
-                    color: isActive ? 'var(--pbi-blue)' : 'var(--text-secondary)',
-                    cursor: selectedPanel ? 'pointer' : 'default',
-                    opacity: selectedPanel ? 1 : 0.5,
-                    transition: 'all .12s',
-                  }}
-                >
-                  <Icon size={18} />
-                  <span style={{ fontSize: 9, lineHeight: 1.2, textAlign: 'center' }}>{label}</span>
-                </button>
-              )
-            })}
-          </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(5, 1fr)',
+                gap: 4,
+              }}
+            >
+              {CHART_TYPES.map(({ type, label, Icon }) => {
+                const isActive =
+                  selectedPanel?.chartTypeOverride === type ||
+                  (!selectedPanel?.chartTypeOverride && selectedPanel?.result.chart?.type === type)
+                return (
+                  <button
+                    key={type}
+                    title={label}
+                    onClick={() => handleChartChange(type)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '8px',
+                      borderRadius: 2,
+                      border: isActive ? '1px solid var(--pbi-blue)' : '1px solid transparent',
+                      background: isActive ? 'var(--pbi-blue-light)' : 'transparent',
+                      color: isActive ? 'var(--pbi-blue)' : 'var(--text-secondary)',
+                      cursor: selectedPanel ? 'pointer' : 'default',
+                      opacity: selectedPanel ? 1 : 0.5,
+                      transition: 'all .12s',
+                    }}
+                    className="hover-bg-neutral-10"
+                  >
+                    <Icon size={18} strokeWidth={1.5} />
+                  </button>
+                )
+              })}
+            </div>
         </div>
 
         <div style={{ height: 1, background: 'var(--border-light)', margin: '8px 0' }} />
@@ -157,19 +172,27 @@ export default function VisualizationPanel() {
             COLORS
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {PBI_COLORS.map(c => (
-              <div
-                key={c}
-                style={{
-                  width: 18, height: 18,
-                  background: c,
-                  borderRadius: 2,
-                  cursor: 'pointer',
-                  border: '1px solid rgba(0,0,0,.1)',
-                }}
-                title={c}
-              />
-            ))}
+            {PBI_COLORS.map(c => {
+              const isActive = selectedPanel?.colorOverride === c || 
+                               (!selectedPanel?.colorOverride && selectedPanel?.result.chart?.colors?.[0] === c);
+              return (
+                <div
+                  key={c}
+                  onClick={() => handleColorChange(c)}
+                  style={{
+                    width: 18, height: 18,
+                    background: c,
+                    borderRadius: 2,
+                    cursor: selectedPanel ? 'pointer' : 'default',
+                    border: isActive ? '2px solid black' : '1px solid rgba(0,0,0,.1)',
+                    boxShadow: isActive ? '0 0 0 1px white inset' : 'none',
+                    opacity: selectedPanel ? 1 : 0.5,
+                    transition: 'all .15s',
+                  }}
+                  title={c}
+                />
+              )
+            })}
           </div>
         </div>
 

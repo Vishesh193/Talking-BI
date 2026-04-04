@@ -27,9 +27,12 @@ const STAGE_COLORS: Record<string, string> = {
 export default function Header() {
   const {
     wsConnected, agentStage, agentMessage,
-    panels, clearPanels, ttsEnabled, toggleTts,
+    pages, activePageId, clearPage, ttsEnabled, toggleTts,
     setShowSettings, currentTranscript,
   } = useBIStore()
+
+  const activePage = pages.find(p => p.id === activePageId)
+  const panels = activePage?.panels || []
 
   const isActive = !['idle', 'done', 'error'].includes(agentStage)
 
@@ -83,7 +86,7 @@ export default function Header() {
         {/* Clear panels */}
         {panels.length > 0 && (
           <button
-            onClick={clearPanels}
+            onClick={() => clearPage()}
             className="p-1.5 rounded-sm border border-border text-ink-dim hover:border-red-400/30 hover:text-red-400 transition-all"
             title="Clear all panels"
           >

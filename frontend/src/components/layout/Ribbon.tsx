@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import {
   BarChart2, Home, Plus, Download, Settings, Database,
   ChevronDown, Mic, Wand2, RefreshCw, Eye, Grid, FileText,
-  Layers, Zap, Link, Save,
+  Layers, Zap, Link, Save, RotateCcw,
 } from 'lucide-react'
 import { useBIStore } from '@/stores/biStore'
 import { apiService } from '@/services/api'
@@ -135,7 +135,7 @@ export default function Ribbon({ onQuery }: RibbonProps) {
             agentStage !== 'idle' && agentStage !== 'done' ? 'thinking' :
             wsConnected ? 'connected' : 'disconnected'
           }`} />
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 200, truncate: 'ellipsis' }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {stageLabelMap[agentStage]}
           </span>
         </div>
@@ -171,8 +171,17 @@ export default function Ribbon({ onQuery }: RibbonProps) {
                 disabled={uploading}
                 primary
               />
+              <RibbonBtn 
+                icon={<RotateCcw size={14} />} 
+                label="New Session" 
+                onClick={() => {
+                  if (confirm('Start a fresh session? Current charts and history will be cleared.')) {
+                    useBIStore.getState().resetSession()
+                    toast.success('Started a fresh analytical session')
+                  }
+                }} 
+              />
               <RibbonBtn icon={<Link size={14} />} label="Connect" onClick={toggleConnectorsPanel} />
-              <RibbonBtn icon={<RefreshCw size={14} />} label="Refresh" onClick={() => toast('Data refreshed')} />
             </RibbonGroup>
 
             <RibbonDivider />

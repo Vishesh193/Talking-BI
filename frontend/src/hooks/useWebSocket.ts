@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useBIStore } from '@/stores/biStore'
+import { useAuthStore } from '@/stores/authStore'
 import toast from 'react-hot-toast'
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
@@ -7,24 +8,32 @@ const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
 export function useWebSocket() {
   const ws = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
+  const reconnectDelay = useRef<number>(1000)
 
   const {
     sessionId, setWsConnected, setAgentStage, setAgentMessage,
     addPanel, addToHistory, setClarificationQuestion, setLastTtsText,
+    activePageId, setPageAdvancedMeta,
   } = useBIStore()
+  const { token } = useAuthStore()
 
   const connect = useCallback(() => {
     if (ws.current?.readyState === WebSocket.OPEN) return
-    ws.current = new WebSocket(`${WS_URL}/ws/${sessionId}`)
+    const tokenParam = token ? `&token=${token}` : ''
+    ws.current = new WebSocket(`${WS_URL}/ws/${sessionId}?dummy=1${tokenParam}`)
+
+    ws.current.onclose = () => {
+      setWsConnected(false)
+      console.log(`WebSocket closed. Retrying in ${reconnectDelay.current}ms...`)
+      reconnectTimer.current = setTimeout(connect, reconnectDelay.current)
+      // Exponential backoff
+      reconnectDelay.current = Math.min(reconnectDelay.current * 1.5, 30000)
+    }
 
     ws.current.onopen = () => {
       setWsConnected(true)
       setAgentStage('idle')
-    }
-
-    ws.current.onclose = () => {
-      setWsConnected(false)
-      reconnectTimer.current = setTimeout(connect, 3000)
+      reconnectDelay.current = 1000 // Reset on success
     }
 
     ws.current.onerror = () => {
@@ -103,6 +112,15 @@ export function useWebSocket() {
         setAgentMessage(msg.message || 'An error occurred')
         toast.error(msg.message || 'An error occurred')
         setTimeout(() => setAgentStage('idle'), 3000)
+        break
+
+      case 'dashboard_theme':
+        if (activePageId) {
+          setPageAdvancedMeta(activePageId, {
+            dashboard_title: msg.title,
+            colors: msg.palette,
+          })
+        }
         break
 
       case 'pong':

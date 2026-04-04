@@ -2,8 +2,8 @@ import base64
 import io
 import json
 import logging
+import asyncio
 from typing import Dict, Optional
-
 from fastapi import WebSocket
 
 from agents.orchestrator import run_pipeline
@@ -13,17 +13,33 @@ from core.database import async_session_maker, QueryLog
 logger = logging.getLogger(__name__)
 
 
+from core.auth import decode_token
+
 class WebSocketManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        # session_id → {user_id, email, role, ...}
+        self.connection_auth: Dict[str, Dict] = {}
         # session_id → {file_id: {filename, columns, dataframe, ...}}
         self.uploaded_files: Dict[str, Dict] = {}
 
     # ── Connection lifecycle ─────────────────────────────────────────────
 
-    async def connect(self, websocket: WebSocket, session_id: str) -> None:
+    async def connect(self, websocket: WebSocket, session_id: str, token: Optional[str] = None) -> None:
+        user_info = None
+        if token:
+            try:
+                user_info = decode_token(token)
+                logger.info(f"Auth success for {user_info.get('email')} on session {session_id}")
+            except Exception as e:
+                logger.warning(f"Auth failed on session {session_id}: {e}")
+                # We could close the socket here, but keeping it open for now for dev flexibility
+        
         await websocket.accept()
         self.active_connections[session_id] = websocket
+        if user_info:
+            self.connection_auth[session_id] = user_info
+            
         logger.info(f"WebSocket connected: {session_id}")
         await self._send(session_id, {
             "type": "connected",
@@ -70,6 +86,20 @@ class WebSocketManager:
 
         session_files = self.uploaded_files.get(session_id, {})
 
+        # Thinking Ping Loop (keeps socket alive + UI fresh)
+        async def thinking_pings():
+            stages = ["Analyzing...", "Generating SQL...", "Fetching Data...", "Processing Insights...", "Crafting Recommendations..."]
+            idx = 0
+            while True:
+                await asyncio.sleep(5)
+                await self._send(session_id, {
+                    "type": "agent_thinking",
+                    "stage": "processing",
+                    "message": stages[idx % len(stages)]
+                })
+                idx += 1
+
+        ping_task = asyncio.create_task(thinking_pings())
         try:
             result = await run_pipeline(
                 transcript=query,
@@ -113,6 +143,8 @@ class WebSocketManager:
                 "type": "error",
                 "message": f"Pipeline error: {str(e)}",
             })
+        finally:
+            ping_task.cancel()
 
     # ── Voice audio pipeline ─────────────────────────────────────────────
 
@@ -166,12 +198,9 @@ class WebSocketManager:
             audio_bytes = base64.b64decode(audio_b64)
             client = AsyncGroq(api_key=settings.GROQ_API_KEY)
 
-            audio_file = io.BytesIO(audio_bytes)
-            audio_file.name = "audio.webm"
-
             response = await client.audio.transcriptions.create(
                 model="whisper-large-v3-turbo",
-                file=("audio.webm", audio_file),
+                file=("audio.webm", audio_bytes),
                 language="en",
                 prompt="Business intelligence query about sales, revenue, customers, or products.",
             )
@@ -192,12 +221,9 @@ class WebSocketManager:
             audio_bytes = base64.b64decode(audio_b64)
             client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-            audio_file = io.BytesIO(audio_bytes)
-            audio_file.name = "audio.webm"
-
             response = await client.audio.transcriptions.create(
                 model="whisper-1",
-                file=audio_file,
+                file=("audio.webm", audio_bytes),
                 language="en",
                 prompt="Business intelligence query about sales, revenue, customers, or products.",
             )
@@ -219,6 +245,10 @@ class WebSocketManager:
             self.uploaded_files[session_id] = {}
         self.uploaded_files[session_id][file_id] = file_info
         logger.info(f"File registered for session {session_id}: {file_info.get('filename')}")
+
+    def get_session_files(self, session_id: str) -> Dict:
+        """Return all uploaded files for a session."""
+        return self.uploaded_files.get(session_id, {})
 
     # ── Query log writer ─────────────────────────────────────────────────
 

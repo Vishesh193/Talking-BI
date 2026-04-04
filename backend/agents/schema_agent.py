@@ -3,7 +3,9 @@ Schema Agent — Retrieves relevant schema context from the registry.
 Uses the intent to find the right tables/columns for NL→SQL generation.
 """
 import logging
-from typing import Dict, List, Optional, Any
+import time
+import hashlib
+from typing import Dict, List, Optional, Any, Tuple
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 
@@ -11,6 +13,11 @@ from core.config import settings
 from core.database import async_session_maker
 
 logger = logging.getLogger(__name__)
+
+# Schema Caching & Filtering Limits
+SCHEMA_CACHE: Dict[str, Tuple[str, float, str]] = {} # {db_url: (schema_text, timestamp, checksum)}
+CACHE_TTL = 3600 # 1 hour
+MAX_TABLES_IN_CONTEXT = 15 # Top relevant tables to include
 
 # Built-in schema descriptions for demo data
 DEMO_SCHEMA = """
@@ -59,13 +66,13 @@ TABLE: marketing_campaigns
   - revenue_attributed (DECIMAL) — Revenue attributed [metric]
   - start_date (DATE), end_date (DATE) — Campaign dates
 
-=== DATE/TIME HELPERS ===
-current_month: WHERE MONTH(order_date) = MONTH(CURDATE()) AND YEAR(order_date) = YEAR(CURDATE())
-previous_month: WHERE MONTH(order_date) = MONTH(CURDATE() - INTERVAL 1 MONTH)
-last_7_days: WHERE order_date >= CURDATE() - INTERVAL 7 DAY
-this_year: WHERE YEAR(order_date) = YEAR(CURDATE())
-last_year: WHERE YEAR(order_date) = YEAR(CURDATE()) - 1
-today: WHERE DATE(order_date) = CURDATE()
+=== DATE/TIME HELPERS (DuckDB syntax ONLY) ===
+current_month: WHERE EXTRACT(MONTH FROM order_date) = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM order_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+previous_month: WHERE order_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1' MONTH) AND order_date < DATE_TRUNC('month', CURRENT_DATE)
+last_7_days: WHERE order_date >= CURRENT_DATE - INTERVAL '7' DAY
+this_year: WHERE EXTRACT(YEAR FROM order_date) = EXTRACT(YEAR FROM CURRENT_DATE)
+last_year: WHERE EXTRACT(YEAR FROM order_date) = EXTRACT(YEAR FROM CURRENT_DATE) - 1
+today: WHERE CAST(order_date AS DATE) = CURRENT_DATE
 """
 
 
@@ -76,36 +83,38 @@ class SchemaAgent:
             self._analytics_engine = create_async_engine(settings.ANALYTICS_DB_URL)
 
     async def run(self, intent: Dict, uploaded_files: Dict = None) -> Dict:
-        """Get relevant schema context for the intent."""
+        """Get relevant schema context for the intent, prioritizing user data."""
         try:
             data_source = intent.get("data_source", "auto")
             schema_context = ""
+            has_user_data = False
 
-            # Excel/CSV uploaded files
-            if uploaded_files and (data_source in ["excel", "auto"]):
-                file_schemas = self._get_uploaded_file_schemas(uploaded_files)
-                if file_schemas:
-                    schema_context += f"\n\n=== UPLOADED FILES ===\n{file_schemas}"
+            # IF UPLOADED FILES EXIST — ISOLATE TO THEM ONLY
+            if uploaded_files:
+                schema_context = self._get_uploaded_file_schemas(uploaded_files)
+                return {"schema_context": schema_context}
 
-            # SQL database schema
-            if data_source in ["sql", "auto"]:
+            # 2. SQL database schema
+            if data_source == "sql" or (data_source == "auto" and settings.ANALYTICS_DB_URL):
                 if self._analytics_engine:
-                    db_schema = await self._introspect_database()
-                    schema_context += f"\n\n=== SQL DATABASE ===\n{db_schema}"
-                else:
-                    # Use demo schema
-                    schema_context += DEMO_SCHEMA
+                    db_schema = await self._get_cached_database_schema(intent)
+                    schema_context += f"\n\n=== CORPORATE DATABASE ===\n{db_schema}"
+                    has_user_data = True
 
-            # KPI registry context
+            # 3. KPI registry context
             kpi_context = await self._get_kpi_context(intent.get("metric"))
             if kpi_context:
-                schema_context += f"\n\n=== KPI REGISTRY ===\n{kpi_context}"
+                schema_context += f"\n\n=== VERIFIED METRICS ===\n{kpi_context}"
+
+            # 4. Demo schema fallback (ONLY if no other data exists or if explicitly requested)
+            if not has_user_data or data_source == "demo":
+                 schema_context += f"\n\n=== DEMO DATASET (Use only if specifically asked for Sales/Revenue) ===\n{DEMO_SCHEMA}"
 
             return {"schema_context": schema_context}
 
         except Exception as e:
             logger.error(f"SchemaAgent error: {e}")
-            return {"schema_context": DEMO_SCHEMA, "error": None}  # Fallback to demo
+            return {"schema_context": DEMO_SCHEMA, "error": None}
 
     def _get_uploaded_file_schemas(self, uploaded_files: Dict) -> str:
         """Build schema description for uploaded Excel/CSV files."""
@@ -113,9 +122,76 @@ class SchemaAgent:
         for file_id, info in uploaded_files.items():
             if isinstance(info, dict):
                 cols = info.get("columns", [])
+                filename = info.get("filename", "unknown file")
                 table_name = info.get("table_name", f"file_{file_id}")
-                schemas.append(f"TABLE: {table_name} (uploaded file)\n  Columns: {', '.join(cols)}")
-        return "\n".join(schemas)
+                
+                schemas.append(
+                    f"TABLE: {table_name}\n"
+                    f"  Source: User uploaded file '{filename}'\n"
+                    f"  Columns: {', '.join(cols)}\n"
+                    f"  Description: User provided data for analysis. Use this table as the PRIMARY data source."
+                )
+        
+        # Add a strict directive if we have user data
+        if schemas:
+            schemas.insert(0, "!!! IMPORTANT: PRIORITIZE THE FOLLOWING USER-UPLOADED TABLES OVER ANY OTHER DATA SOURCE !!!")
+            
+        return "\n\n".join(schemas)
+
+    async def _get_cached_database_schema(self, intent: Dict) -> str:
+        """Retrieve schema from cache or introspect, then filter for relevance."""
+        db_key = str(settings.ANALYTICS_DB_URL)
+        now = time.time()
+        
+        # 1. Try to get full schema from cache
+        if db_key in SCHEMA_CACHE:
+            full_schema, timestamp, checksum = SCHEMA_CACHE[db_key]
+            if now - timestamp < CACHE_TTL:
+                logger.info("Schema cache hit")
+                return self._filter_relevant_tables(full_schema, intent)
+
+        # 2. Cache miss or expired: Introspect everything
+        full_schema = await self._introspect_database()
+        checksum = hashlib.md5(full_schema.encode()).hexdigest()
+        SCHEMA_CACHE[db_key] = (full_schema, now, checksum)
+        
+        return self._filter_relevant_tables(full_schema, intent)
+
+    def _filter_relevant_tables(self, full_schema: str, intent: Dict) -> str:
+        """Filter the schema to only include tables relevant to the intent."""
+        if not full_schema or full_schema == DEMO_SCHEMA:
+            return full_schema
+            
+        metric = intent.get("metric", "").lower()
+        dimension = intent.get("dimension", "").lower()
+        query_text = intent.get("raw_transcript", "").lower()
+        keywords = {metric, dimension} | set(query_text.split())
+        
+        table_blocks = full_schema.split("TABLE: ")
+        # The first block might be "=== SQL DATABASE ===" or empty
+        header = table_blocks[0]
+        tables = table_blocks[1:]
+        
+        scored_tables = []
+        for table_content in tables:
+            table_name = table_content.split("\n")[0].strip()
+            score = 0
+            # Higher score for direct name match
+            if table_name.lower() in keywords: score += 10
+            # Score for keyword mentions in columns/description
+            for kw in keywords:
+                if kw and len(kw) > 2 and kw in table_content.lower():
+                    score += 1
+            scored_tables.append((score, table_content))
+            
+        # Sort by score descending and take top N
+        scored_tables.sort(key=lambda x: x[0], reverse=True)
+        relevant_tables = [t[1] for t in scored_tables[:MAX_TABLES_IN_CONTEXT]]
+        
+        if not relevant_tables:
+            return full_schema # Fallback to all if filtering failed
+            
+        return header + "\n" + "\nTABLE: ".join(relevant_tables)
 
     async def _introspect_database(self) -> str:
         """Introspect the connected analytics database (works with MySQL, PostgreSQL, SQLite)."""

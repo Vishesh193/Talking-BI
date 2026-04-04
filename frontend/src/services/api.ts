@@ -31,6 +31,9 @@ export const apiService = {
     }).then(r => r.data)
   },
 
+  generateAdvancedDashboard: (data: { session_id: string; answers: any }) =>
+    api.post('/upload/advanced-dashboard', data).then(r => r.data),
+
   createDashboard: (data: { name: string; layout: any[]; kpis: any[] }) =>
     api.post('/dashboards', data).then(r => r.data),
 

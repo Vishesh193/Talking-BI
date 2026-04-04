@@ -1,39 +1,87 @@
-"""Memory Agent — persists session context for follow-up queries."""
+import json
 import logging
-from typing import Dict, Any
-from core.redis_client import session_set, session_get
+from typing import Dict, Any, List
+from core.vector_client import get_session_collection
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryAgent:
-    async def save(self, session_id: str, current_state: Dict) -> None:
-        """Save current state to session memory for follow-up queries."""
-        try:
-            existing = await session_get(session_id)
-            intent = current_state.get("intent", {})
-            panel_history = existing.get("panel_history", {})
-            # If this result targets a specific panel (update) OR is a new panel, store it
-            # From orchestrator.py, we have 'target_panel_id' in the final state if it was an update attempt.
-            tid = current_state.get("target_panel_id")
-            if tid and intent and not current_state.get("error"):
-                panel_history[tid] = intent
+    def __init__(self):
+        self.collection = get_session_collection("default")
 
-            memory = {
-                **existing,
-                "last_intent": intent,
-                "last_metric": intent.get("metric") if intent else None,
-                "last_dimension": intent.get("dimension") if intent else None,
-                "last_period": intent.get("period_a") if intent else None,
-                "last_data_source": current_state.get("data_source_used"),
-                "query_count": existing.get("query_count", 0) + 1,
-                "last_chart_type": current_state.get("chart_config", {}).get("type") if current_state.get("chart_config") else None,
-                "panel_history": panel_history,
+    async def save(self, session_id: str, current_state: Dict) -> None:
+        """Save current state to persistent vector memory for semantic recall."""
+        try:
+            intent = current_state.get("intent", {})
+            if not intent or current_state.get("error"):
+                return
+
+            transcript = current_state.get("transcript", "")
+            
+            # Store the main entry as a document in the vector store
+            # This allows semantic search later: "Show me that chart about last month again"
+            doc_id = f"{session_id}_{int(current_state['start_time'])}"
+            
+            metadata = {
+                "session_id": session_id,
+                "intent_type": intent.get("type", "general"),
+                "metric": intent.get("metric", "unknown"),
+                "dimension": intent.get("dimension", "unknown"),
+                "data_source": current_state.get("data_source_used", "auto"),
+                "timestamp": current_state["start_time"],
+                "intent_json": json.dumps(intent)
             }
-            await session_set(session_id, memory, ttl=3600)
-            logger.info(f"Session {session_id} memory saved. Query #{memory['query_count']}")
+            
+            self.collection.add(
+                ids=[doc_id],
+                documents=[transcript],
+                metadatas=[metadata]
+            )
+            
+            logger.info(f"✅ State saved to Vector Memory for session {session_id}")
         except Exception as e:
-            logger.error(f"MemoryAgent save error: {e}")
+            logger.error(f"❌ MemoryAgent save error: {e}", exc_info=True)
+
+    async def recall(self, session_id: str, query: str, limit: int = 5) -> List[Dict]:
+        """Semantically recall past query context from the session."""
+        try:
+            results = self.collection.query(
+                query_texts=[query],
+                n_results=limit,
+                where={"session_id": session_id}
+            )
+            
+            parsed_results = []
+            if results and results["metadatas"]:
+                for meta in results["metadatas"][0]:
+                    parsed_results.append({
+                        **meta,
+                        "intent_json": json.loads(meta["intent_json"])
+                    })
+            return parsed_results
+        except Exception as e:
+            logger.error(f"❌ MemoryAgent recall error: {e}")
+            return []
 
     async def load(self, session_id: str) -> Dict:
-        return await session_get(session_id)
+        """Legacy support for basic state lookup — now pulling recent from Chroma."""
+        try:
+            # For backward compat with session_get, just return the most recent matching intent
+            results = self.collection.get(
+                where={"session_id": session_id},
+                limit=1,
+                # In current Chroma, sorting isn't built in to get(), 
+                # but we can assume ID order for simple use cases or query for current state.
+            )
+            if results and results["metadatas"]:
+                meta = results["metadatas"][0]
+                return {
+                    "last_intent": json.loads(meta["intent_json"]),
+                    "last_metric": meta["metric"],
+                    "session_id": session_id
+                }
+            return {}
+        except Exception as e:
+            logger.error(f"MemoryAgent load error: {e}")
+            return {}

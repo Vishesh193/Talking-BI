@@ -19,7 +19,8 @@ Always respond with ONLY a valid JSON object. No explanation, no markdown, just 
 
 JSON Schema:
 {
-  "type": "query|compare|trend|drill_down|filter|explain|forecast|summarize",
+  "thought": "Brief chain-of-thought analysis of the query",
+  "type": "query|compare|trend|drill_down|filter|explain|forecast|summarize|simulate",
   "metric": "the business metric being asked about (e.g. revenue, orders, leads, churn_rate)",
   "dimension": "the grouping dimension (e.g. product, region, salesperson, category)",
   "period_a": "primary time period (e.g. current_month, last_7_days, Q1_2024, today, this_year)",
@@ -30,7 +31,18 @@ JSON Schema:
   "clarification_question": null
 }
 
+FEW-SHOT EXAMPLES:
+1. User: "How was revenue last month?"
+   JSON: {"thought": "The user wants a simple revenue query for the previous month.", "type": "query", "metric": "revenue", "period_a": "last_month", "data_source": "auto"}
+
+2. User: "Compare sales in North vs South region"
+   JSON: {"thought": "Comparing sales across two regions.", "type": "compare", "metric": "sales", "dimension": "region", "filters": {"region": ["North", "South"]}, "data_source": "auto"}
+
+3. User: "What if price increases by 10%?"
+   JSON: {"thought": "This is a what-if simulation scenario.", "type": "simulate", "metric": "price", "data_source": "auto"}
+
 Rules:
+- Use 'thought' to explain your logic before filling the fields.
 - NEVER set needs_clarification=True unless the query is complete unreadable gibberish. ALWAYS confidently guess the user's intent. Do not interrogate the user.
 - If no metric is explicitly stated, infer the most likely metric (e.g., "count", "revenue", "price", "records"), or default to "*" or "all".
 - If no time period is specified, default period_a to "all_time", "current_year", or "current_month".
@@ -40,17 +52,26 @@ Rules:
 """
 
 
+from core.llm import groq_client
+
 class IntentAgent:
     def __init__(self):
-        self.client = AsyncGroq(
-            api_key=settings.GROQ_API_KEY,
-            timeout=15.0,
-            max_retries=1
-        )
+        pass
 
-    async def run(self, transcript: str, session_memory: Dict = None, target_panel_id: str = None) -> Dict:
+    async def run(self, transcript: str, session_memory: Dict = None, target_panel_id: str = None, uploaded_files: Dict = None) -> Dict:
         """Parse transcript into structured intent."""
         session_memory = session_memory or {}
+        
+        # Build schema summary for better intent classification
+        schema_summary = ""
+        if uploaded_files:
+            schema_summary = "\n\n=== AVAILABLE USER DATA FIELDS ===\n"
+            for f_id, info in uploaded_files.items():
+                if isinstance(info, dict):
+                    cols = info.get("columns", [])
+                    filename = info.get("filename", "unknown")
+                    schema_summary += f"File: {filename}\nColumns: {', '.join(cols)}\n\n"
+            schema_summary += "!!! USE THESE FIELDS AS THE PRIMARY METRICS/DIMENSIONS. DO NOT INVENT PRODUCT NAMES IF THEY ARE NOT IN THE COLUMNS !!!\n"
 
         # Build context from session memory or target panel
         memory_context = ""
@@ -64,28 +85,12 @@ class IntentAgent:
             memory_context = f"\n\nSession context (previous query): {json.dumps(session_memory['last_intent'])}"
             memory_context += f"\nPrevious metric: {session_memory.get('last_metric', 'unknown')}"
 
-        user_prompt = f"Parse this query: \"{transcript}\"{memory_context}"
+        user_prompt = f"Parse this query: \"{transcript}\"{schema_summary}{memory_context}"
 
         try:
-            response = await self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=500,
-                messages=[
-                    {"role": "system", "content": INTENT_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.1,
-            )
-
-            raw = response.choices[0].message.content.strip()
-            # Strip markdown fences if present
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            intent = json.loads(raw)
-
-            logger.info(f"Intent parsed: type={intent.get('type')}, metric={intent.get('metric')}")
+            intent = await groq_client.generate_json(INTENT_SYSTEM_PROMPT, user_prompt, preferred_model="llama-3.1-8b-instant")
+            
+            logger.info(f"Intent parsed successfully: type={intent.get('type')}")
 
             return {
                 "intent": intent,
@@ -93,23 +98,21 @@ class IntentAgent:
                 "clarification_question": intent.get("clarification_question"),
             }
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse intent JSON: {e}")
+        except Exception as e:
+            import traceback
+            logger.error(f"IntentAgent error: {e}\n{traceback.format_exc()}")
+            # Even if all models fail, we provide a safe fallback intent to keep the UI alive.
             return {
                 "intent": {
-                    "type": "query",
-                    "metric": None,
-                    "dimension": None,
-                    "period_a": "current_month",
-                    "period_b": None,
-                    "filters": {},
-                    "data_source": "auto",
-                    "needs_clarification": True,
-                    "clarification_question": "I didn't quite understand that. Could you rephrase your question?",
+                   "type": "query",
+                   "metric": None,
+                   "dimension": None,
+                   "period_a": "current",
+                   "filters": {},
+                   "data_source": "auto",
+                   "needs_clarification": True,
+                   "clarification_question": f"Model deprecated / unavailable. Please try again. ({str(e)})"
                 },
                 "needs_clarification": True,
-                "clarification_question": "I didn't quite understand that. Could you rephrase your question?",
+                "clarification_question": f"Model deprecated / unavailable. Please try again. ({str(e)})"
             }
-        except Exception as e:
-            logger.error(f"IntentAgent error: {e}")
-            return {"error": f"Intent parsing failed: {str(e)}"}

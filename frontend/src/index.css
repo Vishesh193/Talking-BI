@@ -29,12 +29,12 @@
   --neutral-180:      #201F1E;
 
   /* Surfaces */
-  --surface-page:     #F3F2F1;
+  --surface-page:     #F5F4F0;   /* warm off-white — matches advanced dashboard background */
   --surface-card:     #FFFFFF;
   --surface-panel:    #FFFFFF;
   --surface-header:   #FFFFFF;
   --surface-ribbon:   #FFFFFF;
-  --surface-sidebar:  #F3F2F1;
+  --surface-sidebar:  #F0EFEb;
 
   /* Text */
   --text-primary:     #201F1E;
@@ -167,6 +167,28 @@ input, textarea, select {
 .card-selected {
   border-color: var(--pbi-blue) !important;
   box-shadow: 0 0 0 1px var(--pbi-blue), var(--shadow-card);
+}
+
+/* Advanced dashboard card — matches reference design */
+.dashboard-card {
+  background: #FFFFFF;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 0.5px 1.5px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+
+/* Filter pills */
+.filter-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  color: #fff;
 }
 
 /* ─── Tags / Badges ─────────────────────────────────────────────────────── */

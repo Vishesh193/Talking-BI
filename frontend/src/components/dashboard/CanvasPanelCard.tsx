@@ -1,6 +1,11 @@
-import { X, Pin, Code, BarChart2, Clock, Database, AlertTriangle, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { X, Pin, Code, BarChart2, Clock, Database, AlertTriangle, TrendingUp, TrendingDown, Minus, FileDown, MoreVertical } from 'lucide-react'
 import { useBIStore, CanvasPanel, ChartType } from '@/stores/biStore'
 import ChartRenderer from '@/components/charts/ChartRenderer'
+import DataQualityBadge from './DataQualityBadge'
+import SuggestionChips from './SuggestionChips'
+import { useWebSocket } from '@/hooks/useWebSocket'
+import axios from 'axios'
+import toast from 'react-hot-toast'
 
 interface Props {
   panel: CanvasPanel
@@ -8,27 +13,60 @@ interface Props {
 
 export default function CanvasPanelCard({ panel }: Props) {
   const { selectedPanelId, setSelectedPanelId, removePanel, pinPanel } = useBIStore()
+  const { sendTextQuery } = useWebSocket()
   const { result, chartTypeOverride } = panel
   const isSelected = selectedPanelId === panel.id
 
-  const effectiveChart = chartTypeOverride
+  const effectiveChartConfig = chartTypeOverride
     ? { ...result.chart!, type: chartTypeOverride as ChartType }
     : result.chart
+
+  // Build final effectiveChart applying the color override
+  const effectiveChart = effectiveChartConfig ? {
+    ...effectiveChartConfig,
+    colors: panel.colorOverride 
+      ? [panel.colorOverride, ...(effectiveChartConfig.colors?.slice(1) || [])]
+      : effectiveChartConfig.colors
+  } : undefined
 
   const intentTag = result.intent
     ? `${result.intent.type} · ${result.intent.metric || '?'}`
     : 'query'
 
+  const handleExport = async (format: 'pdf' | 'excel') => {
+    const loading = toast.loading(`Generating ${format.toUpperCase()}...`)
+    try {
+      const response = await axios.post(`/api/export/${format}`, {
+        title: effectiveChart?.title || result.transcript,
+        insights: result.insights,
+        data: effectiveChart?.data || [],
+        strategies: result.strategies,
+        tts_text: result.tts_text
+      }, { responseType: 'blob' })
+
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', `TalkingBI_Export_${panel.id}.${format === 'pdf' ? 'pdf' : 'xlsx'}`)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      toast.success(`${format.toUpperCase()} exported!`, { id: loading })
+    } catch (err) {
+      toast.error('Export failed', { id: loading })
+    }
+  }
+
   return (
     <div
       onClick={() => setSelectedPanelId(isSelected ? null : panel.id)}
       style={{
-        background: 'var(--surface-card)',
-        border: `1px solid ${isSelected ? 'var(--pbi-blue)' : 'var(--border-light)'}`,
+        background: '#FFFFFF',
+        border: `1px solid ${isSelected ? 'var(--pbi-blue)' : 'rgba(0,0,0,0.07)'}`,
         boxShadow: isSelected
-          ? '0 0 0 1px var(--pbi-blue), var(--shadow-card)'
-          : 'var(--shadow-card)',
-        borderRadius: 2,
+          ? '0 0 0 2px var(--pbi-blue), 0 2px 8px rgba(0,0,0,0.12)'
+          : '0 1px 4px rgba(0,0,0,0.08), 0 0.5px 1.5px rgba(0,0,0,0.06)',
+        borderRadius: 12,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -84,9 +122,7 @@ export default function CanvasPanelCard({ panel }: Props) {
                 <Database size={9} />{result.data_source_used.replace('_', ' ')}
               </span>
             )}
-            <span style={{ fontSize: 10, color: 'var(--text-placeholder)', display: 'flex', alignItems: 'center', gap: 3, marginLeft: 'auto' }}>
-              <Clock size={9} />{result.execution_time_ms?.toFixed(0)}ms
-            </span>
+            <DataQualityBadge quality={result.quality} />
           </div>
         </div>
 
@@ -95,6 +131,7 @@ export default function CanvasPanelCard({ panel }: Props) {
           style={{ display: 'flex', gap: 2, flexShrink: 0 }}
           onClick={e => e.stopPropagation()}
         >
+          <button className="btn-icon" onClick={() => handleExport('pdf')} title="Export PDF"><FileDown size={11} /></button>
           <button
             className="btn-icon"
             style={{ width: 22, height: 22, color: panel.pinned ? 'var(--pbi-blue)' : undefined }}
@@ -181,6 +218,14 @@ export default function CanvasPanelCard({ panel }: Props) {
         </div>
       )}
 
+      {/* AI Suggestions */}
+      {result.suggestions && result.suggestions.length > 0 && (
+        <SuggestionChips
+          suggestions={result.suggestions}
+          onSuggestionClick={(q) => sendTextQuery(q)}
+        />
+      )}
+
       {/* Footer transcript */}
       <div
         style={{
@@ -188,15 +233,19 @@ export default function CanvasPanelCard({ panel }: Props) {
           fontSize: 10,
           color: 'var(--text-placeholder)',
           borderTop: '1px solid var(--border-light)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
           flexShrink: 0,
         }}
-        title={`"${result.transcript}"`}
       >
-        "{result.transcript}"
-        {result.row_count > 0 && ` · ${result.row_count} rows`}
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={`"${result.transcript}"`}>
+           "{result.transcript}"
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--text-placeholder)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 3 }}>
+           <Clock size={9} />{result.execution_time_ms?.toFixed(0)}ms
+           {result.row_count > 0 && ` · ${result.row_count} rows`}
+        </span>
       </div>
     </div>
   )

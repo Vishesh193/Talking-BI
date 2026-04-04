@@ -13,6 +13,7 @@ class IntentType(str, Enum):
     EXPLAIN = "explain"
     FORECAST = "forecast"
     SUMMARIZE = "summarize"
+    SIMULATE = "simulate"
 
 
 class DataSourceType(str, Enum):
@@ -42,12 +43,37 @@ class ChartType(str, Enum):
     LINE = "line"
     AREA = "area"
     PIE = "pie"
+    DONUT = "donut"
     SCATTER = "scatter"
     GROUPED_BAR = "grouped_bar"
     STACKED_BAR = "stacked_bar"
     STACKED_AREA = "stacked_area"
     KPI_CARD = "kpi_card"
     TABLE = "table"
+    HEATMAP = "heatmap"
+    SANKEY = "sankey"
+    GEOMAP = "geomap"
+    TREEMAP = "treemap"
+    WATERFALL = "waterfall"
+    GAUGE = "gauge"
+    BULLET = "bullet"
+
+
+class SimulationResult(BaseModel):
+    scenario: str
+    baseline_value: float
+    simulated_value: float
+    net_change_pct: float
+    confidence: float = 0.5
+    reasoning: str
+    impact_level: str = "Neutral" # Positive | Negative | Neutral
+
+
+class StrategyRecommendation(BaseModel):
+    title: str
+    recommendation: str
+    category: str
+    impact: str = "Medium" # High | Medium | Low
 
 
 class InsightCard(BaseModel):
@@ -67,13 +93,15 @@ class ChartConfig(BaseModel):
     data: List[Dict[str, Any]]
     x_key: str
     y_keys: List[str]
-    colors: List[str] = ["#0078D4", "#FF6B35", "#00B7C3", "#8764B8", "#FFD60A"]
+    colors: List[str] = ["#3C3489", "#854F0B", "#0F6E56", "#993C1D", "#BA7517"]
     unit: Optional[str] = None
     show_legend: bool = True
     show_grid: bool = True
     # KPI card fields
     kpi_value: Optional[float] = None
     kpi_label: Optional[str] = None
+    kpi_delta: Optional[float] = None
+    kpi_direction: Optional[str] = None  # up | down | neutral
 
 
 class AgentResult(BaseModel):
@@ -85,11 +113,15 @@ class AgentResult(BaseModel):
     row_count: int = 0
     chart: Optional[ChartConfig] = None
     insights: List[InsightCard] = []
+    strategies: List[StrategyRecommendation] = []
+    simulation: Optional[SimulationResult] = None
+    suggestions: List[str] = []
     tts_text: Optional[str] = None
     execution_time_ms: float = 0
     error: Optional[str] = None
     needs_clarification: bool = False
     clarification_question: Optional[str] = None
+    update_panel_id: Optional[str] = None
 
 
 class TextQueryRequest(BaseModel):

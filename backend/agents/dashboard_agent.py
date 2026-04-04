@@ -41,7 +41,8 @@ Return ONLY valid JSON in this exact format:
       "question": "Short, specific question",
       "options": ["Option A", "Option B", "Option C"],
       "allow_custom": true,
-      "skippable": true
+      "skippable": true,
+      "note": "User can select multiple options or select all"
     }}
   ]
 }}
@@ -50,21 +51,20 @@ Rules:
 - Suggestions should cover different analytical angles: performance, trend, comparison, distribution, KPI summary
 - Questions should help identify: time period focus, primary metric, comparison dimension
 - Max 5 suggestions, max 3 questions
-- Options in questions should be actual column values or realistic choices based on the data
+- Options in questions should be actual column values or realistic choices based on the data. Provide 4-6 diverse options per question.
 - Make titles and descriptions specific to the actual columns, not generic
+- Questions should be designed for multi-selection (e.g. 'Which metrics do you care about?' instead of 'What is the primary metric?')
 """
 
 
+from core.llm import groq_client
+
 class DashboardAgent:
     def __init__(self):
-        self.client = AsyncGroq(
-            api_key=settings.GROQ_API_KEY,
-            timeout=20.0,
-            max_retries=1
-        )
+        pass
 
     async def analyze_file(self, file_id: str, filename: str, df: pd.DataFrame) -> Dict:
-        """Analyze a DataFrame and return dashboard suggestions + clarifying questions."""
+        """Analyze a DataFrame and return dashboard suggestions + clarifying questions with fallback."""
         try:
             # Build column info
             columns_info = []
@@ -89,29 +89,24 @@ class DashboardAgent:
             # Sample rows
             sample = df.head(3).to_dict(orient="records")
 
-            prompt = DASHBOARD_ANALYSIS_PROMPT.format(
+            user_prompt = DASHBOARD_ANALYSIS_PROMPT.format(
                 filename=filename,
                 rows=len(df),
                 columns_info="\n".join(columns_info),
                 sample=json.dumps(sample, default=str)[:2000],
             )
 
-            response = await self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                max_tokens=1500,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-            )
-
-            raw = response.choices[0].message.content.strip()
-            # Strip markdown fences
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            raw = raw.strip().rstrip("```").strip()
-
-            result = json.loads(raw)
+            result = await groq_client.generate_json("You are a senior BI analyst expert.", user_prompt)
+            
+            # Inject the mandatory Advanced Dashboard option
+            advanced_dashboard = {
+                "id": "S0_ADVANCED",
+                "title": "Professional Executive Dashboard",
+                "description": "Auto-generated analyst-grade report following the 6-step Strategic BI Procedure (Steps 1-6). Includes specialized layouts, color palettes, and advanced chart assignments.",
+                "chart_types": ["kpi_card", "line", "grouped_bar", "treemap", "scatter", "waterfall"],
+                "focus": "advanced-dashboard",
+                "preview_kpis": list(df.columns)[:4]
+            }
 
             return {
                 "file_id": file_id,
@@ -119,17 +114,16 @@ class DashboardAgent:
                 "rows": len(df),
                 "columns": list(df.columns),
                 "column_types": column_types,
-                "suggestions": result.get("suggestions", []),
+                "suggestions": [advanced_dashboard] + result.get("suggestions", []),
                 "clarifying_questions": result.get("clarifying_questions", []),
             }
 
         except Exception as e:
-            logger.error(f"DashboardAgent.analyze_file error: {e}", exc_info=True)
-            # Fallback: generate basic suggestions without LLM
+            logger.error(f"DashboardAgent.analyze_file error (all fallbacks): {e}")
             return self._fallback_suggestions(file_id, filename, df)
 
     def _fallback_suggestions(self, file_id: str, filename: str, df: pd.DataFrame) -> Dict:
-        """Generate basic suggestions without LLM."""
+        """Generate 3+ questions and suggestions without LLM."""
         numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
         cat_cols = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c])]
         column_types = {c: ("numeric" if pd.api.types.is_numeric_dtype(df[c]) else "categorical") for c in df.columns}
@@ -137,38 +131,44 @@ class DashboardAgent:
         suggestions = [
             {
                 "id": "s1",
-                "title": "Summary KPI Dashboard",
-                "description": f"Key metrics overview showing totals and averages for {', '.join(numeric_cols[:3])}",
+                "title": "General Performance Dashboard",
+                "description": f"Key metrics overview for {', '.join(numeric_cols[:3])}",
                 "chart_types": ["kpi_card", "bar"],
                 "focus": "KPI Summary",
                 "preview_kpis": numeric_cols[:3],
             },
             {
                 "id": "s2",
-                "title": "Comparative Analysis",
+                "title": "Category Breakdown",
                 "description": f"Compare {numeric_cols[0] if numeric_cols else 'values'} across different {cat_cols[0] if cat_cols else 'categories'}",
-                "chart_types": ["bar", "grouped_bar"],
+                "chart_types": ["bar", "pie"],
                 "focus": "Comparison",
                 "preview_kpis": numeric_cols[:2],
-            },
-            {
-                "id": "s3",
-                "title": "Distribution Overview",
-                "description": "Breakdown of data distribution across categories",
-                "chart_types": ["pie", "bar"],
-                "focus": "Distribution",
-                "preview_kpis": numeric_cols[:1],
-            },
+            }
         ]
 
         questions = [
             {
                 "id": "q1",
-                "question": "What is your primary analytical goal?",
-                "options": ["Track performance over time", "Compare categories", "Identify top performers", "Spot anomalies"],
+                "question": "What is the primary metric you want to track?",
+                "options": numeric_cols[:4],
                 "allow_custom": True,
                 "skippable": True,
             },
+            {
+                "id": "q2",
+                "question": "Which dimension should we use for grouping?",
+                "options": cat_cols[:4],
+                "allow_custom": True,
+                "skippable": True,
+            },
+            {
+                "id": "q3",
+                "question": "What is the desired time granularity?",
+                "options": ["Daily", "Weekly", "Monthly", "Quarterly"],
+                "allow_custom": False,
+                "skippable": True,
+            }
         ]
 
         return {

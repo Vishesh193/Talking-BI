@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import { ChevronRight, ChevronDown, Hash, Type, Calendar, Search } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ChevronRight, ChevronDown, Hash, Type, Calendar, Search, ShieldCheck, Zap } from 'lucide-react'
 import { useBIStore } from '@/stores/biStore'
+import { useMetricStore } from '@/stores/metricStore'
 
 interface Props {
   onQuery: (q: string) => void
@@ -8,8 +9,14 @@ interface Props {
 
 export default function FieldsPanel({ onQuery }: Props) {
   const { uploadedFiles, pages, activePageId, selectedPanelId } = useBIStore()
+  const { metrics, fetchMetrics, loading: metricsLoading } = useMetricStore()
   const [search, setSearch] = useState('')
   const [expandedFile, setExpandedFile] = useState<string | null>(null)
+  const [expandedMetrics, setExpandedMetrics] = useState(true)
+
+  useEffect(() => {
+    fetchMetrics()
+  }, [fetchMetrics])
 
   const activePage = pages.find(p => p.id === activePageId)
   const usedColumns = new Set(
@@ -17,6 +24,10 @@ export default function FieldsPanel({ onQuery }: Props) {
       p.result.intent?.metric,
       p.result.intent?.dimension,
     ].filter(Boolean)) || []
+  )
+
+  const filteredMetrics = metrics.filter(m =>
+    !search || m.key.toLowerCase().includes(search.toLowerCase()) || m.description.toLowerCase().includes(search.toLowerCase())
   )
 
   const filteredFiles = uploadedFiles.map(f => ({
@@ -64,14 +75,14 @@ export default function FieldsPanel({ onQuery }: Props) {
         }}
       >
         <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--text-secondary)', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 8 }}>
-          Fields
+          Data Explorer
         </div>
         <div style={{ position: 'relative' }}>
           <Search size={12} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-placeholder)' }} />
           <input
             className="input-field"
             style={{ paddingLeft: 26, height: 28, fontSize: 12 }}
-            placeholder="Search fields..."
+            placeholder="Search metrics & fields..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -80,6 +91,63 @@ export default function FieldsPanel({ onQuery }: Props) {
 
       {/* Field list */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+        {/* Verified Metrics Section */}
+        <div style={{ marginBottom: 4 }}>
+          <button
+            onClick={() => setExpandedMetrics(!expandedMetrics)}
+            style={{
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 12px',
+              background: 'transparent',
+              cursor: 'pointer',
+              fontSize: 12,
+              fontWeight: 600,
+              color: '#8764B8',
+              transition: 'background .12s',
+            }}
+          >
+            {expandedMetrics ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            <ShieldCheck size={12} strokeWidth={2.5} />
+            <span style={{ flex: 1, textAlign: 'left', letterSpacing: '0.02em' }}>
+              VERIFIED METRICS
+            </span>
+            {metricsLoading && <div className="spinner-border" style={{ width: 10, height: 10 }} />}
+          </button>
+
+          {expandedMetrics && filteredMetrics.map(m => (
+            <div
+              key={m.key}
+              title={`${m.description}${m.unit ? ` (${m.unit})` : ''}`}
+              onClick={() => handleFieldClick(m.key)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '4px 12px 4px 34px',
+                cursor: 'pointer',
+                fontSize: 12,
+                color: '#6e4ead',
+                background: usedColumns.has(m.key) ? 'rgba(135,100,184,0.08)' : 'transparent',
+                borderLeft: usedColumns.has(m.key) ? '2px solid #8764B8' : '2px solid transparent',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(135,100,184,0.12)')}
+              onMouseLeave={e => (e.currentTarget.style.background = usedColumns.has(m.key) ? 'rgba(135,100,184,0.08)' : 'transparent')}
+            >
+              <Zap size={11} fill="#8764B840" />
+              <span style={{ fontWeight: usedColumns.has(m.key) ? 600 : 500 }}>
+                {m.key.toUpperCase()}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: '8px 12px 4px', fontSize: 11, color: 'var(--text-placeholder)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Report Data
+        </div>
+
         {filteredFiles.length === 0 ? (
           <div
             style={{
@@ -90,11 +158,11 @@ export default function FieldsPanel({ onQuery }: Props) {
             }}
           >
             <div style={{ marginBottom: 8, fontSize: 24 }}>📂</div>
-            Upload a CSV or Excel file to see fields
+            Upload files to see more fields
           </div>
         ) : (
           filteredFiles.map(file => (
-            <div key={file.file_id}>
+            <div key={file.file_id} style={{ marginBottom: 2 }}>
               {/* File header */}
               <button
                 onClick={() => setExpandedFile(expandedFile === file.file_id ? null : file.file_id)}
@@ -111,8 +179,6 @@ export default function FieldsPanel({ onQuery }: Props) {
                   color: 'var(--text-primary)',
                   transition: 'background .12s',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--neutral-20)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               >
                 {expandedFile === file.file_id
                   ? <ChevronDown size={12} style={{ flexShrink: 0 }} />
@@ -122,15 +188,15 @@ export default function FieldsPanel({ onQuery }: Props) {
                   {file.filename}
                 </span>
                 <span style={{ fontSize: 10, color: 'var(--text-placeholder)', flexShrink: 0 }}>
-                  {file.rows.toLocaleString()} rows
+                  {file.rows.toLocaleString()}
                 </span>
               </button>
 
               {/* Columns */}
-              {(expandedFile === file.file_id || expandedFile === null) && file.columns.map(col => (
+              {(expandedFile === file.file_id) && file.columns.map(col => (
                 <div
                   key={col}
-                  title={`Ask: "Show ${col} by category"`}
+                  title={`Ask: "Show me ${col}"`}
                   onClick={() => handleFieldClick(col)}
                   style={{
                     display: 'flex',
@@ -145,7 +211,7 @@ export default function FieldsPanel({ onQuery }: Props) {
                     background: usedColumns.has(col) ? 'var(--pbi-blue-light)' : 'transparent',
                     transition: 'background .12s',
                   }}
-                  onMouseEnter={e => { if (!usedColumns.has(col)) e.currentTarget.style.background = 'var(--neutral-20)' }}
+                  onMouseEnter={e => { if (!usedColumns.has(col)) e.currentTarget.style.background = 'var(--neutral-10)' }}
                   onMouseLeave={e => { if (!usedColumns.has(col)) e.currentTarget.style.background = 'transparent' }}
                 >
                   {getColIcon(col)}
@@ -156,34 +222,6 @@ export default function FieldsPanel({ onQuery }: Props) {
               ))}
             </div>
           ))
-        )}
-
-        {/* Demo fields when no file */}
-        {filteredFiles.length === 0 && (
-          <>
-            <div style={{ padding: '8px 12px 4px', fontSize: 11, color: 'var(--text-placeholder)', fontWeight: 600, textTransform: 'uppercase' }}>
-              Demo Data
-            </div>
-            {['revenue','orders','profit','category','region','salesperson','order_date','product_name'].map(col => (
-              <div
-                key={col}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '4px 12px 4px 16px',
-                  cursor: 'pointer',
-                  fontSize: 12,
-                  color: 'var(--text-secondary)',
-                }}
-                onMouseEnter={e => (e.currentTarget.style.background = 'var(--neutral-20)')}
-                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-              >
-                {getColIcon(col)}
-                <span>{col.replace(/_/g, ' ')}</span>
-              </div>
-            ))}
-          </>
         )}
       </div>
     </div>

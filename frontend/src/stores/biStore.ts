@@ -4,9 +4,10 @@ import { persist } from 'zustand/middleware'
 // ─── Core BI Types ───────────────────────────────────────────────────────────
 
 export type ChartType =
-  | 'bar' | 'line' | 'area' | 'pie' | 'scatter'
+  | 'bar' | 'line' | 'area' | 'pie' | 'donut' | 'scatter'
   | 'grouped_bar' | 'stacked_bar' | 'stacked_area'
-  | 'kpi_card' | 'table'
+  | 'kpi_card' | 'table' | 'heatmap' | 'sankey' | 'geomap'
+  | 'treemap' | 'waterfall' | 'gauge' | 'bullet'
 
 export interface InsightCard {
   title: string
@@ -17,6 +18,23 @@ export interface InsightCard {
   confidence: number
   action?: string
   is_anomaly: boolean
+}
+
+export interface StrategyRecommendation {
+  title: string
+  recommendation: string
+  category: string
+  impact: 'High' | 'Medium' | 'Low'
+}
+
+export interface SimulationResult {
+  scenario: string
+  baseline_value: number
+  simulated_value: number
+  net_change_pct: number
+  confidence: number
+  reasoning: string
+  impact_level: 'Positive' | 'Negative' | 'Neutral'
 }
 
 export interface ChartConfig {
@@ -31,6 +49,10 @@ export interface ChartConfig {
   show_grid: boolean
   kpi_value?: number
   kpi_label?: string
+  kpi_value_key?: string
+  kpi_secondary_key?: string
+  kpi_delta?: number
+  kpi_direction?: 'up' | 'down' | 'neutral'
 }
 
 export interface Intent {
@@ -43,6 +65,18 @@ export interface Intent {
   data_source?: string
 }
 
+export interface DataQualityReport {
+  score: number
+  grade: string
+  grade_color: string
+  row_count: number
+  null_pct: number
+  outlier_count: number
+  duplicate_count: number
+  freshness: string
+  signals: Array<{ type: 'warning' | 'info'; message: string }>
+}
+
 export interface AgentResult {
   session_id: string
   transcript: string
@@ -50,12 +84,24 @@ export interface AgentResult {
   sql?: string
   data_source_used?: string
   row_count: number
+  quality?: DataQualityReport
   chart?: ChartConfig
   insights: InsightCard[]
+  strategies: StrategyRecommendation[]
+  simulation?: SimulationResult
+  suggestions: string[]
   tts_text?: string
   execution_time_ms: number
   error?: string
+  needs_clarification?: boolean
+  clarification_question?: string
   update_panel_id?: string  // If present, the agent wants to update this specific panel
+  layout_override?: {
+    w?: number
+    h?: number
+    x?: number
+    y?: number
+  }
 }
 
 // ─── Dashboard Page / Sheet ───────────────────────────────────────────────────
@@ -71,12 +117,26 @@ export interface CanvasPanel {
   w: number  // grid units (1–6)
   h: number  // height category: 1=small, 2=medium, 3=large
   chartTypeOverride?: ChartType  // user can change chart type
+  colorOverride?: string // user can override the primary color
+}
+
+export interface DashboardAdvancedMeta {
+  dashboard_title?: string
+  filter_pills?: { label: string }[]
+  colors?: {
+    primary: string
+    secondary: string
+    positive: string
+    negative: string
+    background?: string
+  }
 }
 
 export interface DashboardPage {
   id: string
   name: string
   panels: CanvasPanel[]
+  advancedMeta?: DashboardAdvancedMeta
 }
 
 // ─── File Analysis / Dashboard Suggestion Flow ───────────────────────────────
@@ -119,6 +179,7 @@ export type AgentStage =
 interface BIStore {
   // Session
   sessionId: string
+  resetSession: () => void
 
   // WebSocket
   wsConnected: boolean
@@ -151,6 +212,7 @@ interface BIStore {
   addPage: (name?: string) => string  // returns new page id
   removePage: (id: string) => void
   renamePage: (id: string, name: string) => void
+  setPageAdvancedMeta: (pageId: string, meta: DashboardAdvancedMeta) => void
 
   // Panels (within active page)
   // Panels (within active page)
@@ -159,6 +221,7 @@ interface BIStore {
   removePanel: (panelId: string, pageId?: string) => void
   pinPanel: (panelId: string, pageId?: string) => void
   updatePanelChart: (panelId: string, chartType: ChartType, pageId?: string) => void
+  updatePanelColor: (panelId: string, color: string, pageId?: string) => void
   movePanelLayout: (panelId: string, updates: Partial<Pick<CanvasPanel,'x'|'y'|'w'|'h'>>, pageId?: string) => void
   clearPage: (pageId?: string) => void
 
@@ -226,6 +289,20 @@ export const useBIStore = create<BIStore>()(
       toggleTts: () => set((s) => ({ ttsEnabled: !s.ttsEnabled })),
       lastTtsText: null,
       setLastTtsText: (t) => set({ lastTtsText: t }),
+      resetSession: () => {
+        const newSessionId = crypto.randomUUID()
+        set({
+          sessionId: newSessionId,
+          queryHistory: [],
+          pages: [{ id: 'page-1', name: 'Sales Summary', panels: [] }],
+          activePageId: 'page-1',
+          uploadedFiles: [],
+          selectedPanelId: null,
+          lastTtsText: null,
+          clarificationQuestion: null,
+        })
+        console.log('[Store] Session reset. New ID:', newSessionId)
+      },
 
       // ── Multi-page Dashboard ──────────────────────────────────────────
       pages: [{ ...DEFAULT_PAGE }],
@@ -254,6 +331,10 @@ export const useBIStore = create<BIStore>()(
 
       renamePage: (id, name) => set((s) => ({
         pages: s.pages.map(p => p.id === id ? { ...p, name } : p),
+      })),
+
+      setPageAdvancedMeta: (pageId, meta) => set((s) => ({
+        pages: s.pages.map(p => p.id === pageId ? { ...p, advancedMeta: meta } : p),
       })),
 
       // ── Panel operations ──────────────────────────────────────────────
@@ -287,10 +368,10 @@ export const useBIStore = create<BIStore>()(
           result,
           timestamp: new Date(),
           pinned: false,
-          x: col * 3,
-          y: row,
-          w: result.chart?.type === 'kpi_card' ? 1 : 3,
-          h: result.chart?.type === 'kpi_card' ? 1 : 2,
+          x: result.layout_override?.x ?? (col * 3),
+          y: result.layout_override?.y ?? row,
+          w: result.layout_override?.w ?? (result.chart?.type === 'kpi_card' ? 1 : 3),
+          h: result.layout_override?.h ?? (result.chart?.type === 'kpi_card' ? 1 : 2),
         }
 
         return {
@@ -343,6 +424,17 @@ export const useBIStore = create<BIStore>()(
           pages: s.pages.map(p =>
             p.id === targetId
               ? { ...p, panels: p.panels.map(pan => pan.id === panelId ? { ...pan, chartTypeOverride: chartType } : pan) }
+              : p
+          ),
+        }
+      }),
+
+      updatePanelColor: (panelId, color, pageId) => set((s) => {
+        const targetId = pageId || s.activePageId
+        return {
+          pages: s.pages.map(p =>
+            p.id === targetId
+              ? { ...p, panels: p.panels.map(pan => pan.id === panelId ? { ...pan, colorOverride: color } : pan) }
               : p
           ),
         }
@@ -417,6 +509,7 @@ export const useBIStore = create<BIStore>()(
         queryHistory: s.queryHistory,
         activePageId: s.activePageId,
         activeRibbonTab: s.activeRibbonTab,
+        sessionId: s.sessionId,
       }),
     }
   )

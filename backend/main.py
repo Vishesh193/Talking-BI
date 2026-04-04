@@ -13,6 +13,7 @@ import uvicorn
 from core.config import settings
 from core.database import init_db
 from core.redis_client import init_redis
+from core.vector_client import get_chroma_client
 from api.routes import router as api_router
 from api.websocket_handler import WebSocketManager
 
@@ -32,6 +33,8 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Starting Talking BI backend...")
     await init_db()
     await init_redis()
+    # Initialize Vector Memory
+    get_chroma_client()
     # FIX #8: attach ws_manager to app.state so upload route can register files
     app.state.ws_manager = ws_manager
     logger.info("✅ Database, Redis, and WebSocket manager ready")
