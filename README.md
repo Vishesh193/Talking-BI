@@ -11,6 +11,7 @@
 *   **🛡️ Data Quality & Hygiene:** Every chart includes a **Data Quality Badge** profiling null percentages, outliers, and freshness (powered by `DataQualityAgent`).
 *   **🚨 Proactive Alerts:** Anomaly detection built into the pipeline. Insights that exceed thresholds trigger **Slack** or **Webhook** alerts automatically.
 *   **🖨️ Stakeholder Exports:** Generate high-fidelity **PDF** or **Excel** reports directly from dashboard panels with AI-narrated executive summaries.
+*   **📊 Automated Executive Dashboards:** Dynamically generate advanced, multi-panel layouts from uploaded datasets, utilizing multi-select clarifying questions to tailor precisely to user context.
 *   **🧠 LangGraph Orchestration:** A fault-tolerant 12-agent pipeline with per-node retries and graceful degradation.
 *   **🔗 Unified Data Connectors:** Query across **PostgreSQL**, **MySQL**, **CSV/Excel** (via DuckDB), **Power BI**, **Salesforce**, and **Shopify**.
 *   **💾 Persistent Vector Memory:** ChromaDB-backed session recall allows complex multi-turn discovery (e.g., *"Now show the breakdown by region for that"*).
@@ -93,6 +94,8 @@ npm run dev
 
 ## 🛡️ Enterprise Reliability
 
+*   **Adaptive Rate Limiting & Fallbacks:** Built-in resilient LLM routing with automated backoff for `429 Too Many Requests` and dynamic model fallbacks, ensuring uninterrupted high-volume dashboard generation.
+*   **Robust SQL Auto-Correction:** Advanced query syntax validation enforcing strict DuckDB-compliant rules with auto-retry loops to resolve binder errors and eliminate generative hallucinations on the fly.
 *   **Fault Tolerance:** Every agent node is wrapped in a `try-except` fallback. Non-critical failures (Insight, Strategy, TTS) allow the pipeline to proceed with a successful query result.
 *   **Query Safety:** Enforced `10,000` row limit, `30s` execution timeout, and read-only SQL validation via `EXPLAIN` cost estimation.
 *   **Schema Caching:** TTL-based cache with MD5 checksums prevents redundant database introspection on 100+ table schemas.
