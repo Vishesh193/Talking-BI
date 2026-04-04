@@ -49,20 +49,28 @@ graph TD
     WS -->|Update Canvas| UI[React Dashboard]
 ```
 
+### Core Analytics Pipeline
 | Phase | Agent | Responsible For |
 |---|---|---|
 | **Parse** | `IntentAgent` | Converts transcript to structured JSON with Few-Shot & CoT grounding. |
 | **Logic** | `MetricStore` | Resolves natural language metrics (e.g. "churn") to canonical SQL expressions. |
 | **Context** | `SchemaAgent` | Retrieves metadata via TTL-based cache with relevance filtering. |
-| **Execute** | `QueryAgent` | Generates safe SQL with automatic `LIMIT` and `EXPLAIN` cost-checks. |
-| **Hygene** | `DataQuality` | Profiles results for nulls, outliers, and freshness; generates quality badges. |
-| **Model** | `Simulation` | Performs predictive what-if analysis and business scenario modeling. |
-| **Visualize**| `VizAgent` | Selects best chart (Recharts/ECharts) and validates data shape. |
+| **Execute** | `QueryAgent` | Generates safe SQL (enforcing DuckDB syntax for files) with auto-retries for binder errors. |
+| **Hygiene** | `DataQualityAgent` | Profiles results for nulls, outliers, and freshness; generates quality badges. |
+| **Model** | `SimulationAgent` | Performs predictive what-if analysis and business scenario modeling. |
+| **Visualize**| `VizAgent` | Selects best chart type (Recharts/ECharts) and validates data shape. |
 | **Analyze** | `InsightAgent`| Narrates data, flags anomalies, and suggests follow-up queries. |
-| **Prescribe**| `Strategy` | Generates ranked prescriptive recommendations and next steps. |
+| **Prescribe**| `StrategyAgent` | Generates ranked prescriptive recommendations and next steps. |
 | **Notify** | `AlertAgent` | Dispatches alerts via Slack/Webhooks if anomalies exceed thresholds. |
 | **Export** | `ExportAgent` | Generates high-fidelity PDF/Excel reports from dashboard state. |
 | **Retain** | `MemoryAgent` | Persists session context via ChromaDB for semantic recall. |
+| **Speech** | `TTSAgent` | Synthesizes spoken commentary from AI insights. |
+
+### Advanced Dashboard Generation
+| Phase | Agent | Responsible For |
+|---|---|---|
+| **Suggest** | `DashboardAgent` | Triggers when users upload datasets; generates tailored clarifying questions and suggested dashboard configurations. |
+| **Orchestrate** | `AdvancedDashboardAgent` | Parallelizes query intent, SQL generation, and visualization selection to efficiently render a multi-panel comprehensive dashboard. |
 
 ---
 
